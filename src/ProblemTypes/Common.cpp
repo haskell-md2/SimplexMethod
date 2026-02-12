@@ -12,7 +12,7 @@ struct Common::Impl
     Eigen::VectorXd b;
     Eigen::VectorXd c;
     std::vector<Common::ConstraintType> constraintTypes;
-    std::vector<Common::VaribleType> variableTypes;
+    std::vector<Common::VariableType> variableTypes;
     bool maximize;
 
     Impl(const Eigen::MatrixXd& A_,
@@ -229,6 +229,7 @@ std::unique_ptr<Symmetrical> Common::ToSymmetrical() const
         switch (pimpl_->variableTypes[j])
         {
             case VariableType::NonNegative:
+            {
                 // Переменная >= 0 остается без изменений
                 c_sym[col_idx] = pimpl_->c[j];
                 
@@ -256,12 +257,14 @@ std::unique_ptr<Symmetrical> Common::ToSymmetrical() const
                 }
                 col_idx++;
                 break;
+            }
 
             case VariableType::NonPositive:
+            {
                 // x_j <= 0 заменяем на x_j = -x_j', где x_j' >= 0
                 c_sym[col_idx] = -pimpl_->c[j];  // Знак меняется
                 
-                row_idx = 0;
+                int row_idx = 0;
                 for (int i = 0; i < m; ++i)
                 {
                     if (pimpl_->constraintTypes[i] == ConstraintType::Equal)
@@ -283,13 +286,15 @@ std::unique_ptr<Symmetrical> Common::ToSymmetrical() const
                 }
                 col_idx++;
                 break;
+            }
 
             case VariableType::Free:
+            {
                 // Свободная переменная x_j = x_j' - x_j''
                 c_sym[col_idx] = pimpl_->c[j];      // Коэффициент для x_j'
                 c_sym[col_idx + 1] = -pimpl_->c[j]; // Коэффициент для x_j''
                 
-                row_idx = 0;
+                int row_idx = 0;
                 for (int i = 0; i < m; ++i)
                 {
                     if (pimpl_->constraintTypes[i] == ConstraintType::Equal)
@@ -315,6 +320,7 @@ std::unique_ptr<Symmetrical> Common::ToSymmetrical() const
                 }
                 col_idx += 2;
                 break;
+            }
         }
     }
 
