@@ -1,10 +1,15 @@
 #pragma once
+#include "ProblemTypes/Canonical.h"
 
-class EnumerationSolver
-{
+class EnumerationSolver {
 private:
-    /* data */
+
+    const Canonical& problem;
+
 public:
-    EnumerationSolver(/* args */);
+
+    double solveEnumeration();
+
+    explicit EnumerationSolver(const Canonical &problem);
     ~EnumerationSolver();
 };
