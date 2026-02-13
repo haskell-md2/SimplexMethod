@@ -12,28 +12,39 @@ private:
     Canonical _problem;
     static constexpr double EPS = 1e-12;
 
+    // Приведение b к неотрицательному виду (умножение строк на -1)
     static void make_b_nonneg(Eigen::MatrixXd& A, Eigen::VectorXd& b) {
         for (int i = 0; i < b.size(); ++i) {
-            if (b(i) < 0) { A.row(i) *= -1; b(i) *= -1; }
+            if (b(i) < 0) { 
+                A.row(i) *= -1; 
+                b(i) *= -1; 
+            }
         }
     }
 
-    static Canonical createSupportProblem(Eigen::MatrixXd A, Eigen::VectorXd b) {
-        make_b_nonneg(A, b);
-        const int m = A.rows();
-        const int n = A.cols();
+    // Построение расширенной задачи (5.11) с целевой функцией min sum(y)
+    static Canonical createAuxiliaryProblem(const Eigen::MatrixXd& A, const Eigen::VectorXd& b) {
+        Eigen::MatrixXd A_copy = A;
+        Eigen::VectorXd b_copy = b;
+        make_b_nonneg(A_copy, b_copy);
+        
+        const int m = A_copy.rows();
+        const int n = A_copy.cols();
 
+        // [A | I]
         Eigen::MatrixXd Aug(m, n + m);
-        Aug.leftCols(n) = A;
+        Aug.leftCols(n) = A_copy;
         Aug.rightCols(m).setIdentity();
 
+        // Целевая функция: min sum(y)
         Eigen::VectorXd c_aug(n + m);
         c_aug.setZero();
-        c_aug.tail(m).setOnes(); // min sum y
+        c_aug.tail(m).setOnes();
 
-        return Canonical(Aug, b, c_aug);
+        return Canonical(Aug, b_copy, c_aug);
     }
 
+    // Вычисление L = N \ N_k
     static Eigen::VectorXi complement(int n, const Eigen::VectorXi& N) {
         std::vector<char> inN(n, 0);
         for (int i = 0; i < N.size(); ++i) {
@@ -48,7 +59,7 @@ private:
         return L;
     }
 
-    // Построить B = A[:,N]
+    // Построение базисной матрицы B = A[:, N]
     static Eigen::MatrixXd basisMatrix(const Eigen::MatrixXd& A, const Eigen::VectorXi& N) {
         const int m = A.rows();
         Eigen::MatrixXd B(m, m);
@@ -56,114 +67,158 @@ private:
         return B;
     }
 
-    // Пересчитать BFS x по текущему базису (небазис=0, базис=B^{-1}b)
-    static void computePrimalBFS(const Eigen::MatrixXd& A,
-                                const Eigen::VectorXd& b,
-                                const Eigen::VectorXi& N,
-                                Eigen::VectorXd& x_out) {
+    // Вычисление B^{-1} и базисного решения
+    static void computeBFS(const Eigen::MatrixXd& A,
+                          const Eigen::VectorXd& b,
+                          const Eigen::VectorXi& N,
+                          Eigen::VectorXd& x,
+                          Eigen::MatrixXd& Binv) {
+        const int m = A.rows();
         Eigen::MatrixXd B = basisMatrix(A, N);
-        Eigen::PartialPivLU<Eigen::MatrixXd> lu(B);
-        Eigen::VectorXd xB = lu.solve(b);
-
-        x_out.setZero(A.cols());
-        for (int t = 0; t < N.size(); ++t) x_out(N(t)) = xB(t);
+        Eigen::FullPivLU<Eigen::MatrixXd> lu(B);
+        if (!lu.isInvertible()) 
+            throw std::runtime_error("Singular basis matrix");
+        
+        Binv = lu.inverse();
+        Eigen::VectorXd xB = Binv * b;
+        
+        x.setZero(A.cols());
+        for (int t = 0; t < m; ++t) x(N(t)) = xB(t);
     }
 
-    // Один revised-simplex шаг (min). Обновляет базис. Возвращает: optimal/unbounded/iter
-    std::string simplexIterMin(const Eigen::MatrixXd& A,
-                                        const Eigen::VectorXd& b,
-                                        const Eigen::VectorXd& c,
-                                        Eigen::VectorXi& N,
-                                        Eigen::VectorXd& x) {
+    // Одна итерация симплекс-метода
+    std::string simplexIter(const Eigen::MatrixXd& A,
+                           const Eigen::VectorXd& b,
+                           const Eigen::VectorXd& c,
+                           Eigen::VectorXi& N,
+                           Eigen::VectorXd& x,
+                           Eigen::MatrixXd& Binv) {
         const int m = A.rows();
         const int n = A.cols();
 
-        Eigen::VectorXi L = complement(n, N);
-
-        Eigen::MatrixXd B = basisMatrix(A, N);
-        Eigen::MatrixXd Binv = B.inverse();
-
-        Eigen::VectorXd xB = Binv * b;
-        x.setZero(n);
-        for (int t = 0; t < m; ++t) x(N(t)) = xB(t);
-
+        // Шаг 1: Вычисляем y = c_B^T * B^{-1}
         Eigen::RowVectorXd cB(m);
         for (int t = 0; t < m; ++t) cB(t) = c(N(t));
         Eigen::RowVectorXd yT = cB * Binv;
 
-        // entering: любой j с d_j < 0, возьмём самый отрицательный
+        // Шаг 2: Вычисляем оценки d_j для небазисных переменных
+        Eigen::VectorXi L = complement(n, N);
+        
         double best_d = 0.0;
         int enter = -1;
+        
         for (int t = 0; t < L.size(); ++t) {
             int j = L(t);
-            double d = c(j) - (yT * A.col(j))(0,0);    // d_j = c_j - y^T a_j
-            if (d < best_d - 1e-15) { best_d = d; enter = j; }
+            double d = c(j) - (yT * A.col(j))(0,0);
+            if (d < best_d - 1e-15) {
+                best_d = d;
+                enter = j;
+            }
         }
+
+        // Если все d_j >= 0 - достигнут оптимум
         if (enter == -1) return "optimal";
 
-        Eigen::VectorXd u = Binv * A.col(enter);       // u = B^{-1} a_enter
+        Eigen::VectorXd u = Binv * A.col(enter);
+
         if ((u.array() <= EPS).all()) return "unbounded";
 
+
+        Eigen::VectorXd xB = Binv * b;
+        
         double theta = std::numeric_limits<double>::infinity();
         int leave_pos = -1;
+        
         for (int i = 0; i < m; ++i) {
             if (u(i) > EPS) {
                 double r = xB(i) / u(i);
-                if (r < theta) { theta = r; leave_pos = i; }
+                if (r < theta - 1e-15) {
+                    theta = r;
+                    leave_pos = i;
+                }
             }
         }
-        if (leave_pos == -1 || !std::isfinite(theta)) return "unbounded";
 
+        if (leave_pos == -1) return "unbounded";
+
+        //Обновляем базис
+        int leave_var = N(leave_pos);
         N(leave_pos) = enter;
+
+        // Обновляем B^{-1} по формуле (5.8) из учебника
+        // Строим матрицу G = B^{-1} * A[:, N_{k+1}]
+        Eigen::MatrixXd G = Eigen::MatrixXd::Identity(m, m);
+        G.col(leave_pos) = u;  // вектор u становится на место выходящего столбца
+        
+        Eigen::MatrixXd F = Eigen::MatrixXd::Identity(m, m);
+        for (int i = 0; i < m; ++i) {
+            if (i != leave_pos) {
+                F(i, leave_pos) = -u(i) / u(leave_pos);
+            }
+        }
+        F(leave_pos, leave_pos) = 1.0 / u(leave_pos);
+        
+        // Обновляем B^{-1}
+        Binv = F * Binv;
+
         return "iter";
     }
 
-    // “Выпихнуть” искусственные из базиса (если остались) после Phase I
-    // A_aug = [A|I], n_orig = A.cols(), искусственные индексы: n_orig..n_orig+m-1
-    static void pivotOutArtificial(const Eigen::MatrixXd& A_aug,
-                                  const Eigen::VectorXd& b,
-                                  int n_orig,
-                                  Eigen::VectorXi& N) {
+    // Замена искусственных столбцов в базисе (только для вырожденного случая)
+    static void replaceArtificialColumns(const Eigen::MatrixXd& A_aug,
+                                        const Eigen::VectorXd& b,
+                                        int n_orig,
+                                        Eigen::VectorXi& N,
+                                        Eigen::MatrixXd& Binv,
+                                        const Eigen::VectorXd& x) {
         const int m = A_aug.rows();
-        const int n_aug = A_aug.cols();
-        (void)n_aug;
-
-        // пересчёт x, чтобы знать, где вырожденность (обычно искусственные в базе будут 0)
-        Eigen::VectorXd x_aug;
-        computePrimalBFS(A_aug, b, N, x_aug);
-
-        // Для каждой базисной искусственной переменной пробуем найти входящий "настоящий" столбец,
-        // чтобы пивот был возможен (ненулевой pivot в соответствующей строке).
+        
         for (int pos = 0; pos < m; ++pos) {
             int var = N(pos);
-            if (var < n_orig) continue; // уже не искусственная
-
-            Eigen::MatrixXd B = basisMatrix(A_aug, N);
-            Eigen::PartialPivLU<Eigen::MatrixXd> lu(B);
-
+            if (var < n_orig) continue;  // уже исходная переменная
+            
+            // Пытаемся найти небазисный исходный столбец для замены
             bool replaced = false;
             for (int cand = 0; cand < n_orig; ++cand) {
                 // cand должен быть небазисным
-                if ((N.array() == cand).any()) continue;
-
-                Eigen::VectorXd u = lu.solve(A_aug.col(cand));
+                bool is_basic = false;
+                for (int i = 0; i < m; ++i) {
+                    if (N(i) == cand) { is_basic = true; break; }
+                }
+                if (is_basic) continue;
+                
+                // Вычисляем u = B^{-1} * a_{cand}
+                Eigen::VectorXd u = Binv * A_aug.col(cand);
+                
+                // Проверяем, можно ли использовать cand для замены
                 if (std::abs(u(pos)) > 1e-9) {
-                    // делаем pivot: заменяем искусственную на cand
+                    // Заменяем искусственную на cand
                     N(pos) = cand;
+                    
+                    // Обновляем B^{-1} как при обычной итерации
+                    Eigen::MatrixXd G = Eigen::MatrixXd::Identity(m, m);
+                    G.col(pos) = u;
+                    
+                    Eigen::MatrixXd F = Eigen::MatrixXd::Identity(m, m);
+                    for (int i = 0; i < m; ++i) {
+                        if (i != pos) {
+                            F(i, pos) = -u(i) / u(pos);
+                        }
+                    }
+                    F(pos, pos) = 1.0 / u(pos);
+                    
+                    Binv = F * Binv;
                     replaced = true;
                     break;
                 }
             }
-
-            // Если не смогли заменить, то соответствующее ограничение линейно зависимо/лишнее:
-            // искусственная переменная останется базисной с нулём.
-            // Для Phase II это означает, что базис по исходным переменным может не существовать без удаления строки.
-            // Здесь просто оставим как есть (но предупредим).
+            
+            // Если не удалось заменить, проверяем что искусственная = 0
             if (!replaced) {
-                // проверим, что она действительно 0 (иначе это противоречит obj=0)
-                if (x_aug(var) > 1e-8) {
-                    throw std::runtime_error("Artificial basic variable is positive after Phase I optimal=0.");
+                if (std::abs(x(var)) > 1e-8) {
+                    throw std::runtime_error("Artificial variable positive and cannot be replaced");
                 }
+                // Иначе - избыточное ограничение, оставляем в базисе
             }
         }
     }
@@ -172,64 +227,125 @@ public:
     Solver(Canonical problem) : _problem(problem) {}
     ~Solver() {}
 
-    // Возвращает x* для исходной задачи (длины n_orig)
     Eigen::VectorXd solve() {
-        // ---------- Вспомогательная задача ----------
-        Canonical sup = createSupportProblem(_problem.getA(), _problem.getb());
-        Eigen::MatrixXd A_aug = sup.getA();
-        Eigen::VectorXd b = sup.getb();
-        Eigen::VectorXd c_aug = sup.getc();
+        const Eigen::MatrixXd& A_orig = _problem.getA();
+        const Eigen::VectorXd& b_orig = _problem.getb();
+        const Eigen::VectorXd& c_orig = _problem.getc();
+
+        // ------------------------------------------------------------
+        // Строим вспомогательную задачу (5.11) с min sum(y)
+        // ------------------------------------------------------------
+        Canonical aux_problem = createAuxiliaryProblem(A_orig, b_orig);
+        Eigen::MatrixXd A_aug = aux_problem.getA();
+        Eigen::VectorXd b = aux_problem.getb();
+        Eigen::VectorXd c = aux_problem.getc();  // min sum(y)
 
         const int m = A_aug.rows();
         const int n_aug = A_aug.cols();
-        const int n_orig = _problem.getA().cols();
+        const int n_orig = A_orig.cols();
 
-        // начальный базис: искусственные y
+        // ------------------------------------------------------------
+        // Начальный опорный вектор: x = 0, y = b >= 0
+        // Базис: все искусственные переменные
+        // ------------------------------------------------------------
         Eigen::VectorXi N(m);
         for (int i = 0; i < m; ++i) N(i) = n_orig + i;
+        
+        Eigen::VectorXd x(n_aug);
+        Eigen::MatrixXd Binv;
+        
+        // Вычисляем начальные B, B^{-1}, x
+        computeBFS(A_aug, b, N, x, Binv);
 
-        Eigen::VectorXd x_aug(n_aug);
-
-        for (int it = 0; it < 20'000; ++it) {
-            std::string st = simplexIterMin(A_aug, b, c_aug, N, x_aug);
-            if (st == "optimal") break;
-            if (st == "unbounded") throw std::runtime_error("Phase I unbounded (unexpected).");
+        // ------------------------------------------------------------
+        // Решаем вспомогательную задачу симплекс-методом
+        // ------------------------------------------------------------
+        bool artificials_zero = false;
+        int iteration = 0;
+        const int MAX_ITER = 100000;
+        
+        while (iteration < MAX_ITER) {
+            std::string status = simplexIter(A_aug, b, c, N, x, Binv);
+            
+            // Пересчитываем BFS после итерации
+            computeBFS(A_aug, b, N, x, Binv);
+            
+            // Проверяем, обнулились ли искусственные переменные
+            if (!artificials_zero) {
+                double sum_y = 0.0;
+                for (int i = 0; i < m; ++i) sum_y += x(n_orig + i);
+                
+                if (sum_y <= 1e-8) {
+                    artificials_zero = true;
+                    
+                    // Если x - вырожденный опорный вектор и в базисе
+                    // остались искусственные столбцы - заменяем их
+                    replaceArtificialColumns(A_aug, b, n_orig, N, Binv, x);
+                    
+                    // Пересчитываем BFS после замен
+                    computeBFS(A_aug, b, N, x, Binv);
+                }
+            }
+            
+            if (status == "optimal") {
+                // Проверяем, все ли искусственные равны 0
+                double final_sum_y = 0.0;
+                for (int i = 0; i < m; ++i) final_sum_y += x(n_orig + i);
+                
+                if (final_sum_y > 1e-8) {
+                    throw std::runtime_error("Задача неразрешима");
+                }
+                
+                break;
+            }
+            
+            if (status == "unbounded") {
+                // Вспомогательная задача не может быть неограниченной
+                throw std::runtime_error("Вспомогательная задача неограниченна");
+            }
+            
+            iteration++;
         }
 
-        // проверка infeasible
-        computePrimalBFS(A_aug, b, N, x_aug);
-        double w = c_aug.dot(x_aug); // w = sum y
-        if (w > 1e-8) {
-            throw std::runtime_error("Infeasible original problem (Phase I optimum > 0).");
-        }
-
-        // выпихиваем искусственные из базиса, если они ещё там
-        pivotOutArtificial(A_aug, b, n_orig, N);
-
-        // ---------- Build Phase II start ----------
-        // Используем тот же базис N (но уже должен быть по возможности < n_orig),
-        // и запускаем simplex на исходной A, c.
+        // ------------------------------------------------------------
+        // Решаем исходную задачу с целевой функцией c_orig
+        // ------------------------------------------------------------
         Eigen::MatrixXd A = _problem.getA();
-        Eigen::VectorXd c = _problem.getc();
-        make_b_nonneg(A, b); // важно: b в sup уже был >=0, но A тут исходная; привести согласованно
-
-        // Если в N всё ещё есть искусственные индексы >= n_orig, то без удаления строк базис в A не построить.
-        if ((N.array() >= n_orig).any()) {
-            throw std::runtime_error("Cannot start Phase II: artificial vars remain in basis. Need to drop redundant rows.");
-        }
-
-        Eigen::VectorXd x(n_orig);
-        for (int it = 0; it < 50'000; ++it) {
-            std::string st = simplexIterMin(A, b, c, N, x);
-            if (st == "optimal") {
-                // x уже длины n_orig и является BFS/оптимумом
-                return x;
-            }
-            if (st == "unbounded") {
-                throw std::runtime_error("Original problem unbounded.");
+        Eigen::VectorXd c_orig_copy = c_orig;
+        
+        // Приводим b к неотрицательному виду (согласованно с A)
+        make_b_nonneg(A, b);
+        
+        // Убеждаемся, что в базисе нет искусственных переменных
+        for (int i = 0; i < m; ++i) {
+            if (N(i) >= n_orig) {
+                throw std::runtime_error("Остались эл-ты искусственного базиса");
             }
         }
-
-        throw std::runtime_error("Iteration limit in Phase II.");
+        
+        // Вычисляем BFS для исходной задачи с текущим базисом
+        computeBFS(A, b, N, x, Binv);
+        
+        // Симплекс-метод для исходной задачи
+        iteration = 0;
+        while (iteration < MAX_ITER) {
+            std::string status = simplexIter(A, b, c_orig_copy, N, x, Binv);
+            
+            if (status == "optimal") {
+                // Извлекаем решение исходных переменных
+                Eigen::VectorXd x_opt(n_orig);
+                for (int j = 0; j < n_orig; ++j) x_opt(j) = x(j);
+                return x_opt;
+            }
+            
+            if (status == "unbounded") {
+                throw std::runtime_error("Функция неограниченна");
+            }
+            
+            computeBFS(A, b, N, x, Binv);
+            iteration++;
+        }
+        
+        throw std::runtime_error("Зацикливание!");
     }
 };
