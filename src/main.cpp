@@ -6,34 +6,36 @@
 #include <Eigen/Dense>
 #include "SimplexSolover.h"
 
-int main(){
+// int main(){
 
-    // Фиксированная матрица 2x2 (double)
-    // Eigen::Matrix2d mat;
-    // mat << 1, 2,
-    //        3, 4;
+//     // Фиксированная матрица 2x2 (double)
+//     // Eigen::Matrix2d mat;
+//     // mat << 1, 2,
+//     //        3, 4;
 
-    // // Фиксированный вектор из 2-х элементов
-    // Eigen::Vector2d vec(5, 6);
+//     // // Фиксированный вектор из 2-х элементов
+//     // Eigen::Vector2d vec(5, 6);
 
-    // // Матрично-векторное умножение
-    // Eigen::Vector2d result = mat * vec;
-    // std::cout << "Результат: " << result.transpose() << std::endl;
+//     // // Матрично-векторное умножение
+//     // Eigen::Vector2d result = mat * vec;
+//     // std::cout << "Результат: " << result.transpose() << std::endl;
 
-    Eigen::MatrixXd A(2,4);
-    A << 4, 3, 0, 1,
-        0, 4, 0, 4;
 
-    Eigen::Vector2d b(4, 6);
+//     Eigen::MatrixXd A(2,4);
+//     A << 4, 3, 0, 1,
+//         0, 4, 0, 4;
 
-    Eigen::Vector4d c(5, 1, 0, 0);
+//     Eigen::Vector2d b(4, 6);
 
-    Canonical problem(A, b, c);
-    Solver s(problem);
+//     Eigen::Vector4d c(5, 1, 0, 0);
 
-    std::cout << s.solve().transpose() << std::endl;
+//     Canonical problem(A, b, c,{0,2});
+//     Solver s(problem);
 
-    // std::cout << b;
+//     std::cout << s.solve().transpose() << std::endl;
+
+//     std::cout << b;
+// }
 #include <iomanip>
 
 int main(int argc, char* argv[])
@@ -43,31 +45,26 @@ int main(int argc, char* argv[])
     std::cout << "╚═══════════════════════════════════════════════════════════╝\n" << std::endl;
     
     // Задача из условия
-    Eigen::MatrixXd A(4, 5);
-    A << 2, -2,  3, -1,  2,
-         5, -3,  2,  3, -1,
-        -2,  3,  3, -3,  1,
-        -1, -4,  3,  1, -4;
+    Eigen::MatrixXd A(2, 3);
+    A << 1, 1, 1,
+         2, 1, 0;
     
-    Eigen::VectorXd b(4);
-    b << 5, -46, 53, -57;
+    Eigen::VectorXd b(2);
+    b << 6,   // x1 + x2 + x3 ≤ 6
+         8;   // 2x1 + x2 ≤ 8
     
-    Eigen::VectorXd c(5);
-    c << -1, -5, 5, 1, 4;
+    Eigen::VectorXd c(3);
+    c << 3, 2, 4;   // MAX 3x1 + 2x2 + 4x3
     
     std::vector<Common::ConstraintType> constraintTypes = {
         Common::ConstraintType::LessOrEqual,
-        Common::ConstraintType::LessOrEqual,
-        Common::ConstraintType::GreaterOrEqual,
-        Common::ConstraintType::Equal
+        Common::ConstraintType::LessOrEqual
     };
     
     std::vector<Common::VariableType> variableTypes = {
         Common::VariableType::NonNegative,
         Common::VariableType::NonNegative,
-        Common::VariableType::NonNegative,
-        Common::VariableType::Free,
-        Common::VariableType::Free
+        Common::VariableType::NonNegative
     };
     
     Common common(A, b, c, constraintTypes, variableTypes, true);
@@ -109,5 +106,13 @@ int main(int argc, char* argv[])
     
     std::cout << "\n╚═══════════════════════════════════════════════════════════╝\n" << std::endl;
     
+
+
+    Solver s(*canonical);
+
+    std::cout << s.solve().transpose() << std::endl;
+
+
+
     return 0;
 }

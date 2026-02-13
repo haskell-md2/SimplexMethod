@@ -7,10 +7,6 @@
 class IProblem
 {
 public:
-
-    virtual IProblem * GetDual() = 0;
-    virtual void Print() = 0;
-
     virtual double Evaluate(const Eigen::VectorXd& solution) const = 0;
     virtual void Print() const = 0;
     virtual const Eigen::MatrixXd& GetConstraintsMatrix() const = 0;
