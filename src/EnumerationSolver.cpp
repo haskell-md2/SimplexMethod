@@ -105,57 +105,115 @@ Eigen::VectorXd solve_linear_system(const Eigen::MatrixXd& A, const Eigen::Vecto
 
 
 double EnumerationSolver::solveEnumeration() {
+    double res = std::numeric_limits<double>::max();
+
     const MatrixXd &A = problem._A;
     const VectorXd &b = problem._b;
 
-    ColPivHouseholderQR<MatrixXd> qr(A.transpose());
+    ColPivHouseholderQR<MatrixXd> qr(A.transpose()); // транспонируем, так как qr.colsPermutation() умеет находить только независимые столбцы
+
     int rank = qr.rank();
 
     int m = (int)A.rows();
-    int n = (int)A.cols();
+    int A_num_cols = (int)A.cols();
 
-    long num_of_additional_sign_equations = m - rank;
-    if (num_of_additional_sign_equations < 0) {
-        throw std::runtime_error("Strange: num_of_additional_sign_equations < 0");
+    VectorXi perm = qr.colsPermutation().indices();
+    std::vector<int> independent_rows;
+    for (int i = 0; i < rank; ++i) independent_rows.push_back(perm(i));
+
+    // 2) B (rank x A_num_cols) и b_sub (rank)
+    MatrixXd B((Eigen::Index)rank, A_num_cols); // новая матрица с независимыми строками
+    VectorXd b_sub((Eigen::Index)rank); // соотв B вектор
+    for (int i = 0; i < rank; ++i) {
+        B.row(i) = A.row(independent_rows[i]);
+        b_sub(i) = b(independent_rows[i]);
     }
 
-    std::vector<std::vector<int>> combinations = get_index_combinations(m, (int)num_of_additional_sign_equations);
+    // 3) Перебор базисов по столбцам: rank из A_num_cols
+    std::vector<std::vector<int>> col_combs = get_index_combinations(A_num_cols, rank); // C(A_num_cols, A_num_cols - rank)
 
-    for (size_t comb_idx = 0; comb_idx < combinations.size(); ++comb_idx) {
-        const auto &comb = combinations[comb_idx];
-        std::vector<int> rows_to_keep = reverse_index_list(comb, m); // length should be == rank
+    for (size_t comb_idx = 0; comb_idx < col_combs.size(); ++comb_idx) {
+        const auto &cols = col_combs[comb_idx];
 
-//        // Диагностика
-//        std::cerr << "comb #" << comb_idx << " comb.size()=" << comb.size()
-//                  << " -> rows_to_keep.size()=" << rows_to_keep.size() << "\n";
-//        for (size_t k = 0; k < rows_to_keep.size(); ++k) {
-//            std::cerr << " rows_to_keep[" << k << "]=" << rows_to_keep[k];
-//        }
-//        std::cerr << "\n";
+        // сформировать B_cols (rank x rank)
+        MatrixXd B_cols((Eigen::Index)rank, (Eigen::Index)rank);
+        for (int j = 0; j < rank; ++j) B_cols.col(j) = B.col(cols[j]); // обнуляем столбцы до квадратной матрицы
 
-        Eigen::MatrixXd A_sub((Eigen::Index)rows_to_keep.size(), n);
-        Eigen::VectorXd b_sub((Eigen::Index)rows_to_keep.size());
+        // решить B_cols * xB = b_sub (без проверок)
+//        VectorXd xB = B_cols.fullPivLu().solve(b_sub);
 
-        for (size_t k = 0; k < rows_to_keep.size(); ++k) {
-            int ridx = rows_to_keep[k];
-            if (ridx < 0 || ridx >= m) throw std::runtime_error("row index out of range");
-            A_sub.row((Eigen::Index)k) = A.row((Eigen::Index)ridx);
-            b_sub((Eigen::Index)k) = b((Eigen::Index)ridx);
-        }
+        Eigen::PartialPivLU<Eigen::MatrixXd> lu(B_cols);
+        Eigen::VectorXd xB = lu.solve(b_sub);
 
-        // Теперь размеры согласованы: A_sub.rows() == b_sub.size()
-        try {
-            Eigen::VectorXd x = solve_linear_system(A_sub, b_sub);
-            std::cout << "Solution x (comb #" << comb_idx << "): " << x.transpose() << std::endl;
-        } catch (const std::exception &e) {
-//            std::cout << "Failed to solve for comb #" << comb_idx << ": " << e.what() << "\n";
-            // либо continue, либо обрабатывать дальше
-            continue;
-        }
+        // восстановить полный вектор длины A_num_cols
+        VectorXd x_full = VectorXd::Zero(A_num_cols);
+        for (int j = 0; j < rank; ++j) x_full(cols[j]) = xB(j); // остальные (те, что обнуляли переменные заисыаем как 0?)
+
+        // вывести (минимально)
+        std::cout << "Candidate x (cols index set): " << x_full.transpose() << std::endl;
+        double point = problem._c.dot(x_full);
+        if(point < res) res = point;
     }
 
-    // вернуть что-то осмысленное; сейчас возвращаем 0.0
-    return 0.0;
+    if(res == std::numeric_limits<double>::max()) std::cout << "solution doesn't exist" << std::endl;
+
+    return res;
 }
+
+
+//
+//double EnumerationSolver::solveEnumeration() {
+//    const MatrixXd &A = problem._A;
+//    const VectorXd &b = problem._b;
+//
+//    ColPivHouseholderQR<MatrixXd> qr(A.transpose());
+//    int rank = qr.rank();
+//
+//    int m = (int)A.rows();
+//    int n = (int)A.cols();
+//
+//    long num_of_additional_sign_equations = m - rank;
+//    if (num_of_additional_sign_equations < 0) {
+//        throw std::runtime_error("Strange: num_of_additional_sign_equations < 0");
+//    }
+//
+//    std::vector<std::vector<int>> combinations = get_index_combinations(m, (int)num_of_additional_sign_equations);
+//
+//    for (size_t comb_idx = 0; comb_idx < combinations.size(); ++comb_idx) {
+//        const auto &comb = combinations[comb_idx];
+//        std::vector<int> rows_to_keep = reverse_index_list(comb, m); // length should be == rank
+//
+////        // Диагностика
+////        std::cerr << "comb #" << comb_idx << " comb.size()=" << comb.size()
+////                  << " -> rows_to_keep.size()=" << rows_to_keep.size() << "\n";
+////        for (size_t k = 0; k < rows_to_keep.size(); ++k) {
+////            std::cerr << " rows_to_keep[" << k << "]=" << rows_to_keep[k];
+////        }
+////        std::cerr << "\n";
+//
+//        Eigen::MatrixXd A_sub((Eigen::Index)rows_to_keep.size(), n);
+//        Eigen::VectorXd b_sub((Eigen::Index)rows_to_keep.size());
+//
+//        for (size_t k = 0; k < rows_to_keep.size(); ++k) {
+//            int ridx = rows_to_keep[k];
+//            if (ridx < 0 || ridx >= m) throw std::runtime_error("row index out of range");
+//            A_sub.row((Eigen::Index)k) = A.row((Eigen::Index)ridx);
+//            b_sub((Eigen::Index)k) = b((Eigen::Index)ridx);
+//        }
+//
+//        // Теперь размеры согласованы: A_sub.rows() == b_sub.size()
+//        try {
+//            Eigen::VectorXd x = solve_linear_system(A_sub, b_sub);
+//            std::cout << "Solution x (comb #" << comb_idx << "): " << x.transpose() << std::endl;
+//        } catch (const std::exception &e) {
+////            std::cout << "Failed to solve for comb #" << comb_idx << ": " << e.what() << "\n";
+//            // либо continue, либо обрабатывать дальше
+//            continue;
+//        }
+//    }
+//
+//    // вернуть что-то осмысленное; сейчас возвращаем 0.0
+//    return 0.0;
+//}
 
 EnumerationSolver::~EnumerationSolver() = default;
