@@ -29,11 +29,17 @@ set(PROBLEM_TYPES_SOURCES
 
 set(PARSER_SOURCES
     src/SymmetricalParser.cpp
+    src/CommonParser.cpp
+)
+
+set(SOLVER_SOURCES
+    src/EnumerationSolver.cpp
 )
 
 add_library(simplex_lib STATIC
     ${PROBLEM_TYPES_SOURCES}
     ${PARSER_SOURCES}
+    ${SOLVER_SOURCES}
 )
 
 target_include_directories(simplex_lib PUBLIC
