@@ -8,6 +8,7 @@
 #include "ProblemTypes/Canonical.h"
 
 class Solver {
+
 private:
     Canonical _problem;
     static constexpr double EPS = 1e-9;

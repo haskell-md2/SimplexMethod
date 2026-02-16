@@ -15,6 +15,8 @@ private:
 
 public:
 
+    void PrintCoffMatrixWithB();
+    void PrintObjectiveCoefficients();
     Canonical(const Eigen::MatrixXd& A,
               const Eigen::VectorXd& b,
               const Eigen::VectorXd& c,

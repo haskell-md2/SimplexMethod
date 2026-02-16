@@ -54,6 +54,7 @@ bool EnumerationSolver::handleSolution(const Eigen::VectorXd &xB, int rank, int 
     }
 
     // Проверка допустимости (неотрицательность)
+
     if (x_full.minCoeff() < -tol_feas) return true;
 
     // Проверка выполнения всех уравнений A*x = b (по всей системе)
@@ -63,12 +64,10 @@ bool EnumerationSolver::handleSolution(const Eigen::VectorXd &xB, int rank, int 
     // Дедупликация (если уже есть похожая вершина, пропускаем)
     bool duplicate = false;
     for (const auto &v : found_vertices) {
-        if ((v - x_full).norm() < tol_dup) { 
-            duplicate = true; 
-            break; 
+        if ((v - x_full).norm() < tol_dup) {
+            return true;
         }
     }
-    if (duplicate) return true;
 
     found_vertices.push_back(x_full);
     return false;
@@ -91,7 +90,7 @@ double EnumerationSolver::findSolution() {
             if (val < best) best = val;
         }
         
-        std::cout << "Feasible vertex: x = " << x_full.transpose() << "  f = " << val << std::endl;
+//        std::cout << "Feasible vertex: x = " << x_full.transpose() << "  f = " << val << std::endl;
     }
     
     return best;

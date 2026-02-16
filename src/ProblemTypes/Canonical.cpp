@@ -86,6 +86,23 @@ double Canonical::Evaluate(const Eigen::VectorXd& solution) const
     return pimpl_->c.dot(solution);
 }
 
+void Canonical::PrintCoffMatrixWithB() {
+    for (int i = 0; i < pimpl_->A.rows(); ++i) {
+        for (int j = 0; j < pimpl_->A.cols(); ++j) {
+            std::cout << pimpl_->A(i, j) << ' ';
+        }
+        std::cout << pimpl_->b[i] << '\n';
+    }
+}
+
+void Canonical::PrintObjectiveCoefficients() {
+    for (int i = 0; i < pimpl_->c.size(); ++i) {
+        std::cout << pimpl_->c[i];
+        if (i + 1 < pimpl_->c.size()) std::cout << ' ';
+    }
+    std::cout << '\n';
+}
+
 void Canonical::Print() const
 {
     std::cout << "=== Каноническая форма задачи ЛП ===" << std::endl;
